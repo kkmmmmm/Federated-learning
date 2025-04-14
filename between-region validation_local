@@ -1,0 +1,261 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_auc_score
+from sklearn.calibration import calibration_curve
+
+# ---------------------------
+# 0. 特徴量リスト・追加モデルの係数と切片（列順を統一）
+# ---------------------------
+feature_columns = ['SEX', 'AGE', 'KILLIP', 'DIA', 'HYP', 'HRT', 'ANT', 'PMI', 'HEI', 'WEI', 'SMK', 'HTN', 'LIP', 'PAN', 'FAM', 'STE', 'TTR']
+
+coefficients = {
+    'LASSO1': [0.0468, 0.7915, 0.3233, 0.0973, 0.3112, 0.2727, 0.1623, 0.1860, -0.0751, -0.1327, 0.0875, 0.0725, -0.0731, 0.0434, -0.0594, 0.1575, 0.2488],
+    'Ridge1': [0.0486, 0.7868, 0.3236, 0.0979, 0.3108, 0.2717, 0.1624, 0.1860, -0.0722, -0.1358, 0.0891, 0.0730, -0.0736, 0.0443, -0.0604, 0.1580, 0.2477],
+    'ElasticNet1': [0.0471, 0.7864, 0.3232, 0.0971, 0.3104, 0.2716, 0.1620, 0.1857, -0.0753, -0.1330, 0.0887, 0.0725, -0.0734, 0.0436, -0.0598, 0.1572, 0.2475],
+    'NoRegularization1': [0.0479, 0.7912, 0.3234, 0.0974, 0.3116, 0.2733, 0.1622, 0.1862, -0.0738, -0.1338, 0.0879, 0.0730, -0.0737, 0.0438, -0.0599, 0.1576, 0.2495],
+    'LASSO2': [0.0453, 0.7650, 0.3218, 0.0866, 0.2961, 0.2527, 0.1478, 0.1709, -0.0724, -0.1073, 0.0847, 0.0507, -0.0550, 0.0421, -0.0474, 0.1421, 0.2289],
+    'Ridge2': [0.0541, 0.7035, 0.3210, 0.0967, 0.2966, 0.2515, 0.1566, 0.1787, -0.0740, -0.1306, 0.1132, 0.0633, -0.0766, 0.0467, -0.0663, 0.1483, 0.2339],
+    'ElasticNet2': [0.0556, 0.7151, 0.3210, 0.0858, 0.2883, 0.2421, 0.1505, 0.1705, -0.0703, -0.1147, 0.1009, 0.0555, -0.0716, 0.0393, -0.0587, 0.1386, 0.2193],
+    'NoRegularization2': [0.0538, 0.7986, 0.3292, 0.1007, 0.3147, 0.2735, 0.1626, 0.1873, -0.0667, -0.1288, 0.0975, 0.0625, -0.0740, 0.0446, -0.0639, 0.1577, 0.2606]
+}
+intercepts = {
+    'LASSO1': -3.2662, 'Ridge1': -3.2650, 'ElasticNet1': -3.2629, 'NoRegularization1': -3.2671,
+    'LASSO2': -3.2408, 'Ridge2': -3.2569, 'ElasticNet2': -3.2291, 'NoRegularization2': -3.3433
+}
+
+# ---------------------------
+# 1. データセットの読み込みなどの準備
+# ---------------------------
+data = pd.read_csv('/content/GUSTO_sterberg.csv')
+unique_regl = sorted(data['REGL'].unique())  # テスト地域は 1～16 と仮定
+
+# 各正則化法のハイパーパラメータグリッドの設定
+param_grid_lasso   = {'C': np.logspace(-3, 3, 7), 'penalty': ['l1'],         'solver': ['liblinear']}
+param_grid_ridge   = {'C': np.logspace(-3, 3, 7), 'penalty': ['l2'],         'solver': ['lbfgs']}
+param_grid_elastic = {'C': np.logspace(-3, 3, 7), 'penalty': ['elasticnet'], 'solver': ['saga'], 'l1_ratio': [0.1, 0.5, 0.9]}
+
+# 結果格納用の辞書
+# 構造： results[訓練地域][テスト地域][モデル名] = { 'AUROC': ..., 'CalibrationSlope': ..., 'CalibrationIntercept': ... }
+results = {}
+
+# 各訓練地域・モデルごとの標準化偏回帰係数をまとめるリスト（既存モデル分）
+coeff_list = []
+
+# 追加モデルの係数も後でグラフ化に利用するので、モデル名とともに保存（ここでは点推定値なので保存のみ）
+add_coeff_list = []
+for model_name, coef in coefficients.items():
+    d = {'Model': model_name}
+    for feat, c in zip(feature_columns, coef):
+        d[feat] = c
+    d['Intercept'] = intercepts[model_name]
+    add_coeff_list.append(d)
+
+# ---------------------------
+# 2. 各訓練地域 (REGL) に対してモデル構築（'All' も含む）
+# ---------------------------
+for regl_train in unique_regl + ['All']:
+    print(f"Training region: {regl_train}")
+    # 訓練データの抽出（'All'の場合は全件）
+    if regl_train == 'All':
+        train_data = data.copy()
+    else:
+        train_data = data[data['REGL'] == regl_train].copy()
+    
+    # 特徴量と目的変数の設定（列順をfeature_columnsに沿って）
+    X_train = train_data[feature_columns]
+    y_train = train_data['DAY30']
+    
+    # 特徴量の標準化
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    
+    # 3種類の正則化によるロジスティック回帰のグリッドサーチと正則化無しのモデル
+    models = {
+        'LASSO': GridSearchCV(
+            LogisticRegression(max_iter=10000),
+            param_grid=param_grid_lasso, cv=5, scoring='neg_log_loss'
+        ).fit(X_train_scaled, y_train),
+        
+        'Ridge': GridSearchCV(
+            LogisticRegression(max_iter=10000),
+            param_grid=param_grid_ridge, cv=5, scoring='neg_log_loss'
+        ).fit(X_train_scaled, y_train),
+        
+        'ElasticNet': GridSearchCV(
+            LogisticRegression(max_iter=10000),
+            param_grid=param_grid_elastic, cv=5, scoring='neg_log_loss'
+        ).fit(X_train_scaled, y_train),
+        
+        # 正則化無しモデル: penaltyに None を指定
+        'NoReg': LogisticRegression(penalty=None, solver='lbfgs', max_iter=10000).fit(X_train_scaled, y_train)
+    }
+    
+    # ---------------------------
+    # 2-1. 各モデルの最良推定器の標準化偏回帰係数を保存
+    # ---------------------------
+    for model_name, model in models.items():
+        if model_name == 'NoReg':
+            coef_values = model.coef_[0]
+        else:
+            coef_values = model.best_estimator_.coef_[0]
+        coeff_dict = {'Training_Region': regl_train, 'Model': model_name}
+        for feat, value in zip(X_train.columns, coef_values):
+            coeff_dict[feat] = value
+        coeff_list.append(coeff_dict)
+    
+    # ---------------------------
+    # 3. 各テスト地域 (REGL) に対する評価（点推定値と95%信頼区間の算出）
+    # ---------------------------
+    results.setdefault(regl_train, {})
+    
+    for regl_test in unique_regl:
+        # テストデータの抽出（特徴量の順番をfeature_columnsに沿う）
+        test_data = data[data['REGL'] == regl_test].copy()
+        X_test = test_data[feature_columns]
+        y_test = test_data['DAY30']
+        
+        if len(X_test) > 0:
+            # テストデータの標準化（訓練時と同じ scaler を使用）
+            X_test_scaled = scaler.transform(X_test)
+            
+            results[regl_train].setdefault(regl_test, {})
+            # 既存モデルについて
+            for model_name, model in models.items():
+                y_pred_prob = model.predict_proba(X_test_scaled)[:, 1]
+                auc = roc_auc_score(y_test, y_pred_prob)
+                frac_pos, mean_pred_val = calibration_curve(y_test, y_pred_prob, n_bins=10)
+                slope, intercept_val = np.polyfit(mean_pred_val, frac_pos, 1)
+                
+                # ブートストラップによる95%信頼区間の算出
+                n_bootstraps = 1000
+                boot_aucs = []
+                boot_slopes = []
+                boot_intercepts = []
+                for b in range(n_bootstraps):
+                    indices = np.random.choice(np.arange(len(y_test)), size=len(y_test), replace=True)
+                    y_test_bs = y_test.iloc[indices]
+                    y_pred_prob_bs = y_pred_prob[indices]
+                    if len(np.unique(y_test_bs)) < 2:
+                        continue
+                    try:
+                        auc_bs = roc_auc_score(y_test_bs, y_pred_prob_bs)
+                    except:
+                        continue
+                    boot_frac_pos, boot_mean_pred_val = calibration_curve(y_test_bs, y_pred_prob_bs, n_bins=10)
+                    try:
+                        slope_bs, intercept_bs = np.polyfit(boot_mean_pred_val, boot_frac_pos, 1)
+                    except:
+                        continue
+                    boot_aucs.append(auc_bs)
+                    boot_slopes.append(slope_bs)
+                    boot_intercepts.append(intercept_bs)
+                
+                auc_lower = np.percentile(boot_aucs, 2.5) if boot_aucs else np.nan
+                auc_upper = np.percentile(boot_aucs, 97.5) if boot_aucs else np.nan
+                slope_lower = np.percentile(boot_slopes, 2.5) if boot_slopes else np.nan
+                slope_upper = np.percentile(boot_slopes, 97.5) if boot_slopes else np.nan
+                intercept_lower = np.percentile(boot_intercepts, 2.5) if boot_intercepts else np.nan
+                intercept_upper = np.percentile(boot_intercepts, 97.5) if boot_intercepts else np.nan
+                
+                results[regl_train][regl_test][model_name] = {
+                    'AUROC': auc,
+                    'AUROC_lower': auc_lower,
+                    'AUROC_upper': auc_upper,
+                    'CalibrationSlope': slope,
+                    'CalibrationSlope_lower': slope_lower,
+                    'CalibrationSlope_upper': slope_upper,
+                    'CalibrationIntercept': intercept_val,
+                    'CalibrationIntercept_lower': intercept_lower,
+                    'CalibrationIntercept_upper': intercept_upper
+                }
+            
+            # ---------------------------
+            # 3-2. 追加モデル（固定係数・切片）の評価
+            # ---------------------------
+            # ※追加モデルでは、X_testの順番はfeature_columnsで固定している前提
+            for add_model_name in coefficients:
+                coeff_array = np.array(coefficients[add_model_name])
+                intercept_value = intercepts[add_model_name]
+                # 追加モデルも標準化された特徴量を用いる
+                z = np.dot(X_test_scaled, coeff_array) + intercept_value
+                y_pred_prob_add = 1 / (1 + np.exp(-z))
+                
+                auc = roc_auc_score(y_test, y_pred_prob_add)
+                frac_pos, mean_pred_val = calibration_curve(y_test, y_pred_prob_add, n_bins=10)
+                slope, intercept_val = np.polyfit(mean_pred_val, frac_pos, 1)
+                
+                # ブートストラップによる95%信頼区間
+                n_bootstraps = 1000
+                boot_aucs = []
+                boot_slopes = []
+                boot_intercepts = []
+                for b in range(n_bootstraps):
+                    indices = np.random.choice(np.arange(len(y_test)), size=len(y_test), replace=True)
+                    y_test_bs = y_test.iloc[indices]
+                    y_pred_prob_bs = y_pred_prob_add[indices]
+                    if len(np.unique(y_test_bs)) < 2:
+                        continue
+                    try:
+                        auc_bs = roc_auc_score(y_test_bs, y_pred_prob_bs)
+                    except:
+                        continue
+                    boot_frac_pos, boot_mean_pred_val = calibration_curve(y_test_bs, y_pred_prob_bs, n_bins=10)
+                    try:
+                        slope_bs, intercept_bs = np.polyfit(boot_mean_pred_val, boot_frac_pos, 1)
+                    except:
+                        continue
+                    boot_aucs.append(auc_bs)
+                    boot_slopes.append(slope_bs)
+                    boot_intercepts.append(intercept_bs)
+                
+                auc_lower = np.percentile(boot_aucs, 2.5) if boot_aucs else np.nan
+                auc_upper = np.percentile(boot_aucs, 97.5) if boot_aucs else np.nan
+                slope_lower = np.percentile(boot_slopes, 2.5) if boot_slopes else np.nan
+                slope_upper = np.percentile(boot_slopes, 97.5) if boot_slopes else np.nan
+                intercept_lower = np.percentile(boot_intercepts, 2.5) if boot_intercepts else np.nan
+                intercept_upper = np.percentile(boot_intercepts, 97.5) if boot_intercepts else np.nan
+                
+                results[regl_train][regl_test][add_model_name] = {
+                    'AUROC': auc,
+                    'AUROC_lower': auc_lower,
+                    'AUROC_upper': auc_upper,
+                    'CalibrationSlope': slope,
+                    'CalibrationSlope_lower': slope_lower,
+                    'CalibrationSlope_upper': slope_upper,
+                    'CalibrationIntercept': intercept_val,
+                    'CalibrationIntercept_lower': intercept_lower,
+                    'CalibrationIntercept_upper': intercept_upper
+                }
+
+# ---------------------------
+# 4. 各テスト地域ごとに、全訓練地域（1～16 と All）の結果を1つの CSV にまとめて出力
+# ---------------------------
+# 各テスト地域について、訓練地域・モデル別の結果を列としてまとめる
+for regl_test in unique_regl:
+    data_dict = {}
+    for train_region in results:
+        if regl_test in results[train_region]:
+            for model_name, metrics in results[train_region][regl_test].items():
+                # 例: "AUROC_LASSO_train3", "CalibrationSlope_lower_Ridge_trainAll" など
+                for metric, value in metrics.items():
+                    col_name = f"{metric}_{model_name}_train{train_region}"
+                    data_dict[col_name] = value
+    # DataFrame に変換し、1行のCSVとして出力
+    df_result = pd.DataFrame([data_dict])
+    output_filename = f"test{regl_test}_results.csv"
+    df_result.to_csv(output_filename, index=False)
+    print(f"Test region {regl_test} results saved to {output_filename}")
+
+# ---------------------------
+# 5. 標準化偏回帰係数を全てまとめた CSV 出力（既存モデルと追加モデル）
+# ---------------------------
+coeff_df = pd.DataFrame(coeff_list)
+coeff_df.to_csv("all_coefficients_existing.csv", index=False)
+print("Existing model coefficients saved to all_coefficients_existing.csv")
+
+add_coeff_df = pd.DataFrame(add_coeff_list)
+add_coeff_df.to_csv("all_coefficients_additional.csv", index=False)
+print("Additional model coefficients saved to all_coefficients_additional.csv")
