@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.log
+*.bak*
+_outputs_snapshot*/
+flower_distributed/global_scaler.json
