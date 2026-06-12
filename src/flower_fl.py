@@ -117,6 +117,11 @@ class FLHistory:
     train_auroc: list[float] = field(default_factory=list)
     converged_round: int | None = None
     wall_seconds: float = 0.0
+    # Federated intercept-recalibration step appended after FedAvg convergence.
+    recal_seconds: float = 0.0
+    recal_logloss: float | None = None
+    recal_auroc: float | None = None
+    recal_delta: float | None = None
 
 
 def _global_logloss_auroc(coef, intercept, Xs_all, y_all):
@@ -197,3 +202,42 @@ def run_fedavg(client_data: list[tuple[np.ndarray, np.ndarray]],
     model = FittedModel(coef=coef, intercept=float(intercept[0]),
                         penalty=penalty, C=None, l1_ratio=None)
     return model, hist
+
+
+def federated_intercept_recalibration(coef: np.ndarray, intercept: float,
+                                      client_data: list[tuple[np.ndarray, np.ndarray]],
+                                      max_iter: int = 50, tol: float = 1e-10) -> float:
+    """Privacy-preserving calibration-in-the-large correction for a FedAvg model.
+
+    FedAvg averages the per-region coefficients, so the aggregated model does not
+    satisfy the pooled intercept score equation (mean predicted = mean observed):
+    with a rare outcome this leaves a systematic calibration-in-the-large offset.
+    This routine keeps the FedAvg **slopes fixed** and finds the single scalar
+    shift ``delta`` for the intercept so that, summed across all clients, the
+    total predicted probability equals the total number of events — i.e. it
+    solves, in federated form, the one-parameter offset model
+    ``logit(P(y=1)) = (intercept + delta) + slopes·x``.
+
+    Privacy: each client only ever returns three scalars per Newton step — the
+    sum of predicted probabilities, the sum of ``p*(1-p)`` and (once) the event
+    count.  No patient-level data and no regularisation parameter ``C`` leaves a
+    site, consistent with the federated-standardisation model (which already
+    shares only counts/sums/sums-of-squares).  Returns ``delta``.
+    """
+    lps = [Xs @ coef + intercept for Xs, _ in client_data]
+    Sy = float(sum(float(y.sum()) for _, y in client_data))   # per-site scalar
+    delta = 0.0
+    for _ in range(max_iter):
+        Sp = 0.0
+        Sw = 0.0
+        for lp in lps:                       # in deployment: one scalar pair/site
+            mu = expit(lp + delta)
+            Sp += float(mu.sum())
+            Sw += float((mu * (1.0 - mu)).sum())
+        if Sw <= 0:
+            break
+        step = (Sy - Sp) / Sw
+        delta += step
+        if abs(step) < tol:
+            break
+    return float(delta)

@@ -25,6 +25,10 @@ class SimpleHist:
     train_auroc: list = field(default_factory=list)
     converged_round: int | None = None
     wall_seconds: float = 0.0
+    recal_seconds: float = 0.0
+    recal_logloss: float | None = None
+    recal_auroc: float | None = None
+    recal_delta: float | None = None
 
 
 def main():
@@ -54,6 +58,12 @@ def main():
             if pen in csum.index:
                 cr = csum.loc[pen, "ConvergedRound"]
                 h.converged_round = None if pd.isna(cr) else int(cr)
+                for src, dst in [("RecalSeconds", "recal_seconds"),
+                                 ("RecalLogLoss", "recal_logloss"),
+                                 ("RecalAUROC", "recal_auroc"),
+                                 ("RecalDelta", "recal_delta")]:
+                    if src in csum.columns and not pd.isna(csum.loc[pen, src]):
+                        setattr(h, dst, float(csum.loc[pen, src]))
             conv[pen] = h
     except Exception as e:
         print("convergence reload skipped:", e)
@@ -71,22 +81,23 @@ def main():
     os.makedirs(C.FIG_DIR, exist_ok=True)
     # ylim / major-tick matched to the original Excel charts
     specs = [
-        ("AUROC", C.RED_REGION_AUROC, "AUROC", (0.72, 0.88), 0.04, None,
+        ("AUROC", C.RED_REGION_AUROC, "AUROC", (0.68, 0.88), 0.04, None, None,
          {"l1": "Figure1_AUROC_L1", "none": "FigureS1_AUROC_noreg",
           "l2": "FigureS2_AUROC_L2", "elasticnet": "FigureS3_AUROC_EN"}),
-        ("CalibrationSlope", C.RED_REGION_CALIB, "Calibration slope", (0.0, 2.0), 0.5, 1.0,
+        ("CalibrationSlope", C.RED_REGION_CALIB, "Calibration slope", (0.5, 1.5), 0.25, 1.0, None,
          {"l1": "Figure2_slope_L1", "none": "FigureS4_slope_noreg",
           "l2": "FigureS5_slope_L2", "elasticnet": "FigureS6_slope_EN"}),
-        ("CalibrationIntercept", C.RED_REGION_CALIB, "Calibration intercept", (-0.3, 0.3), 0.1, 0.0,
+        ("CalibrationIntercept", C.RED_REGION_CALIB, "Calibration intercept", (-0.9, 0.9), 0.3, 0.0,
+         ["FL_recal"],
          {"l1": "Figure3_intercept_L1", "none": "FigureS7_intercept_noreg",
           "l2": "FigureS8_intercept_L2", "elasticnet": "FigureS9_intercept_EN"}),
     ]
-    for metric, red, ylab, ylim, major, ref, names in specs:
+    for metric, red, ylab, ylim, major, ref, extra, names in specs:
         for pen in present:
             F.panel_figure(between[between["Penalty"] == pen], metric, red, ylab,
                            f"{ylab} ({C.PENALTY_LABEL[pen]})",
                            os.path.join(C.FIG_DIR, names[pen] + ".png"),
-                           ref_line=ref, ylim=ylim, major=major)
+                           ref_line=ref, ylim=ylim, major=major, extra_sources=extra)
     if pca:
         F.pca_figure(pca, os.path.join(C.FIG_DIR, "Figure4_PCA.png"))
     if conv:

@@ -28,13 +28,21 @@ def _yticks(ylim, major):
     return np.round(np.arange(ylim[0], ylim[1] + major / 2, major), 4)
 
 
+_SRC_LABEL = {"Centralized": "Cent", "FL": "FL", "FL_recal": "FLrc"}
+
+
 def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
                  ylabel: str, suptitle: str, outpath: str,
                  ref_line: float | None = None, ylim=None, major: float | None = None,
-                 figsize=(9.4, 6.1), dpi: int = 200):
+                 extra_sources: list | None = None,
+                 figsize=(12.5, 6.1), dpi: int = 200):
     # NB: ``suptitle`` is intentionally not drawn — the model (penalty) name is
     # already given in the figure caption in the manuscript/supplement, so the
     # freed vertical space is given back to the panels for readability.
+    # ``extra_sources`` (e.g. ["FL_recal"]) appends the recalibrated FL model;
+    # used only for the calibration-intercept figure (it is identical to FL for
+    # AUROC and the calibration slope, an intercept-only correction).
+    extra = extra_sources or []
     fig, axes = plt.subplots(4, 4, figsize=figsize, sharey=True)
     red = str(red_region)
     yticks = _yticks(ylim, major) if (ylim and major) else None
@@ -42,28 +50,34 @@ def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
         sub = between_pen[between_pen["ValidationRegion"] == r].copy()
         sub["Source"] = sub["Source"].astype(str)
         sub = sub.set_index("Source")
-        order = [str(i) for i in C.REGIONS if i != r] + ["Centralized", "FL"]
+        order = [str(i) for i in C.REGIONS if i != r] + ["Centralized", "FL"] + extra
         xs = np.arange(len(order))
         for x, s in zip(xs, order):
+            if s not in sub.index:
+                continue
             p = sub.loc[s, metric]
             lo = sub.loc[s, f"{metric}_lower"]; up = sub.loc[s, f"{metric}_upper"]
             yerr = [[max(p - lo, 0)], [max(up - p, 0)]]
+            mfc = None
             if s == "Centralized":
                 col, mk, ms = "#1f77b4", "s", 4.5
             elif s == "FL":
                 col, mk, ms = "#2ca02c", "D", 4.5
+            elif s == "FL_recal":
+                col, mk, ms, mfc = "#2ca02c", "D", 5.0, "none"   # hollow = recalibrated FL
             elif s == red:
                 col, mk, ms = "red", "o", 3.5
             else:
                 col, mk, ms = "black", "o", 3
             ax.errorbar(x, p, yerr=yerr, fmt=mk, color=col, ms=ms,
-                        ecolor=col, elinewidth=0.6, capsize=1.0, alpha=0.85)
+                        ecolor=col, elinewidth=0.6, capsize=1.0, alpha=0.85,
+                        markerfacecolor=(mfc if mfc else col))
         if ref_line is not None:
             ax.axhline(ref_line, color="grey", ls="--", lw=0.6)
         ax.set_title(f"Region {r}", fontsize=8)
         ax.set_xticks(xs)
-        ax.set_xticklabels([f"R{s}" if s.isdigit() else s[:4] for s in order],
-                           rotation=90, fontsize=5)
+        ax.set_xticklabels([f"R{s}" if s.isdigit() else _SRC_LABEL.get(s, s[:4])
+                            for s in order], rotation=90, fontsize=5)
         ax.tick_params(axis="y", labelsize=7)
         if ylim:
             ax.set_ylim(*ylim)
@@ -77,7 +91,10 @@ def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
         Line2D([], [], color="#1f77b4", marker="s", ls="", label="Centralized (excl. region)"),
         Line2D([], [], color="#2ca02c", marker="D", ls="", label="FL (excl. region)"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=7,
+    if "FL_recal" in extra:
+        handles.append(Line2D([], [], color="#2ca02c", marker="D", ls="",
+                              markerfacecolor="none", label="FL recalibrated"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=7,
                frameon=False, bbox_to_anchor=(0.5, 0.0))
     fig.tight_layout(rect=[0, 0.04, 1, 1.0])
     fig.savefig(outpath, dpi=dpi)
@@ -100,6 +117,7 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
     xlim = (allx.min() - xpad, allx.max() + xpad)
     ylim = (ally.min() - ypad, ally.max() + ypad)
 
+    red = str(C.RED_REGION_AUROC)
     fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True, sharey=True)
     axl = axes.ravel()
     for ax in axl[len(present):]:
@@ -107,18 +125,27 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
     for ax, pen in zip(axl, present):
         df = pca[pen]; texts = []
         for _, rr in df.iterrows():
-            idx = rr["Index"]
+            idx = str(rr["Index"])
             if idx == "FL":
-                ax.scatter(rr.PC1, rr.PC2, marker="s", color="red", s=50, zorder=4)
-                texts.append(ax.text(rr.PC1, rr.PC2, "FL", color="red",
+                ax.scatter(rr.PC1, rr.PC2, marker="D", color="#2ca02c", s=48, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, "FL", color="#2ca02c",
+                                     fontsize=7, fontweight="bold"))
+            elif idx == "FL_recal":
+                ax.scatter(rr.PC1, rr.PC2, marker="D", facecolors="none",
+                           edgecolors="#2ca02c", s=60, linewidths=1.4, zorder=5)
+                texts.append(ax.text(rr.PC1, rr.PC2, "FLrc", color="#2ca02c",
                                      fontsize=7, fontweight="bold"))
             elif idx == "Centralized":
-                ax.scatter(rr.PC1, rr.PC2, marker="^", color="#1f77b4", s=50, zorder=4)
-                texts.append(ax.text(rr.PC1, rr.PC2, "Cen", color="#1f77b4",
+                ax.scatter(rr.PC1, rr.PC2, marker="^", color="#1f77b4", s=55, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, "Cent", color="#1f77b4",
+                                     fontsize=7, fontweight="bold"))
+            elif idx == red:
+                ax.scatter(rr.PC1, rr.PC2, marker="o", color="red", s=42, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, idx, color="red",
                                      fontsize=7, fontweight="bold"))
             else:
                 ax.scatter(rr.PC1, rr.PC2, marker="o", color="black", s=20, zorder=3)
-                texts.append(ax.text(rr.PC1, rr.PC2, str(idx), fontsize=6))
+                texts.append(ax.text(rr.PC1, rr.PC2, idx, fontsize=6))
         ax.set_xlim(*xlim); ax.set_ylim(*ylim)
         ax.axhline(0, color="grey", lw=0.4); ax.axvline(0, color="grey", lw=0.4)
         ax.set_title(PEN_TITLE[pen], fontsize=10)
@@ -129,10 +156,13 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
                         arrowprops=dict(arrowstyle="-", color="grey", lw=0.4))
     handles = [
         Line2D([], [], color="black", marker="o", ls="", label="Region models"),
+        Line2D([], [], color="red", marker="o", ls="", label=f"Region {red}"),
         Line2D([], [], color="#1f77b4", marker="^", ls="", label="Centralized"),
-        Line2D([], [], color="red", marker="s", ls="", label="FL"),
+        Line2D([], [], color="#2ca02c", marker="D", ls="", label="FL"),
+        Line2D([], [], color="#2ca02c", marker="D", ls="", markerfacecolor="none",
+               label="FL recalibrated"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=9, frameon=False)
+    fig.legend(handles=handles, loc="lower center", ncol=5, fontsize=8, frameon=False)
     # Overall title omitted — described in the figure caption. Per-panel penalty
     # labels are kept so each quadrant remains identifiable.
     fig.tight_layout(rect=[0, 0.05, 1, 1.0])
@@ -141,9 +171,10 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
     plt.close(fig)
 
 
-def convergence_figure(conv: dict, outpath: str, figsize=(9.4, 4.6), dpi: int = 200):
+def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int = 200):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     colors = {"none": "black", "l1": "#1f77b4", "l2": "#2ca02c", "elasticnet": "#d62728"}
+    have_recal = False
     for pen, h in conv.items():
         ax1.plot(h.rounds, h.train_logloss, marker="o", ms=3, color=colors[pen],
                  label=PEN_TITLE[pen])
@@ -151,9 +182,27 @@ def convergence_figure(conv: dict, outpath: str, figsize=(9.4, 4.6), dpi: int = 
                  label=PEN_TITLE[pen])
         if h.converged_round:
             ax1.axvline(h.converged_round, color=colors[pen], ls=":", lw=0.8)
+        # Final federated intercept-recalibration step (a single extra round).
+        rll = getattr(h, "recal_logloss", None)
+        rau = getattr(h, "recal_auroc", None)
+        if rll is not None and h.rounds:
+            xr = h.rounds[-1] + 1
+            ax1.plot([h.rounds[-1], xr], [h.train_logloss[-1], rll], color=colors[pen],
+                     ls="-", lw=0.8)
+            ax1.plot(xr, rll, marker="*", ms=11, color=colors[pen],
+                     markeredgecolor="k", markeredgewidth=0.4, zorder=5)
+            ax2.plot(xr, rau, marker="*", ms=11, color=colors[pen],
+                     markeredgecolor="k", markeredgewidth=0.4, zorder=5)
+            have_recal = True
     ax1.set_xlabel("Communication round"); ax1.set_ylabel("Global training log-loss")
-    ax1.legend(fontsize=8)
     ax2.set_xlabel("Communication round"); ax2.set_ylabel("Global training AUROC")
+    handles, labels = ax1.get_legend_handles_labels()
+    if have_recal:
+        handles.append(Line2D([], [], color="grey", marker="*", ls="", ms=11,
+                              markeredgecolor="k", markeredgewidth=0.4,
+                              label="after intercept recalibration"))
+        labels.append("after intercept recalibration")
+    ax1.legend(handles, labels, fontsize=7)
     ax2.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(outpath, dpi=dpi)

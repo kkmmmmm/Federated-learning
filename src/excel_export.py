@@ -160,7 +160,12 @@ def write_results_workbook(within: pd.DataFrame, between: pd.DataFrame,
         conv_summary = pd.DataFrame([
             dict(Penalty=pen, ConvergedRound=h.converged_round,
                  WallSeconds=round(h.wall_seconds, 3),
-                 FinalLogLoss=h.train_logloss[-1], FinalAUROC=h.train_auroc[-1])
+                 RecalSeconds=round(getattr(h, "recal_seconds", 0.0), 4),
+                 TotalSeconds=round(h.wall_seconds + getattr(h, "recal_seconds", 0.0), 3),
+                 RecalDelta=getattr(h, "recal_delta", None),
+                 FinalLogLoss=h.train_logloss[-1], FinalAUROC=h.train_auroc[-1],
+                 RecalLogLoss=getattr(h, "recal_logloss", None),
+                 RecalAUROC=getattr(h, "recal_auroc", None))
             for pen, h in conv.items()])
         conv_summary.to_excel(xl, "FL_convergence_summary", index=False)
         # coefficients

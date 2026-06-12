@@ -91,6 +91,12 @@ N_BOOTSTRAP = 1000          # bootstrap resamples for 95% CIs
 CALIB_BINS = 10             # bins for calibration_curve (matches published figs)
 RANDOM_STATE = 42
 
-# Regions highlighted in red in the published figures
+# Region highlighted in red across ALL between-region figures: the local model
+# with the largest performance deviation (worst external AUROC) and the farthest
+# outlier in coefficient space (Figure 4 PCA).  Used consistently for AUROC,
+# calibration slope and calibration intercept so a single region's aberrant
+# model explains both its poor discrimination and its poor calibration.
 RED_REGION_AUROC = 10       # Figure 1 / S1-S3
-RED_REGION_CALIB = 16       # Figures 2,3 / S4-S9
+RED_REGION_CALIB = 10       # Figures 2,3 / S4-S9 (was 16; under the standard
+                            # calibration definition no single region dominates,
+                            # so we highlight the overall outlier, Region 10)

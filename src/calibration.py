@@ -1,9 +1,21 @@
 """Evaluation metrics (AUROC + calibration) and bootstrap confidence intervals.
 
-The calibration slope/intercept are computed exactly as in the published
-analysis: a 10-bin reliability curve (sklearn ``calibration_curve``) followed by
-an ordinary least-squares line fit of observed-vs-predicted, so the re-analysed
-figures remain directly comparable to the originals.
+The calibration slope and intercept use the standard regression-based
+definitions (Cox; Van Calster et al., *J Clin Epidemiol* 2016; TRIPOD), computed
+on the logit scale from the individual predictions rather than from a binned
+reliability curve:
+
+* **Calibration slope** – the coefficient ``b`` of a logistic regression of the
+  observed outcome on the linear predictor ``LP = logit(p)``:
+  ``logit(P(y=1)) = a + b * LP``.  Perfect calibration => ``b = 1``.
+* **Calibration intercept (calibration-in-the-large)** – the intercept ``a`` of a
+  logistic regression with the linear predictor entered as an *offset* (slope
+  fixed at 1): ``logit(P(y=1)) = a + LP``.  Perfect calibration => ``a = 0``.
+
+Both models are fit by Newton-Raphson / IRLS (a few iterations, vectorised) so
+the 1000x bootstrap stays cheap.  A resample whose fit cannot be solved
+(e.g. all-same outcome, perfect separation) returns NaN and is dropped from the
+percentile CI, exactly as before.
 """
 from __future__ import annotations
 
@@ -27,26 +39,68 @@ def fast_auc(y: np.ndarray, p: np.ndarray) -> float:
     return (r[y == 1].sum() - n1 * (n1 + 1) / 2.0) / (n1 * n0)
 
 
-def calibration_slope_intercept(y: np.ndarray, p: np.ndarray, bins: int = C.CALIB_BINS):
-    """Return (slope, intercept) of the OLS fit to the 10-bin reliability curve.
+def _logit(p: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    p = np.clip(p, eps, 1.0 - eps)
+    return np.log(p / (1.0 - p))
 
-    Fast vectorised reproduction of ``sklearn.calibration.calibration_curve``
-    with the default uniform-width strategy (equal-width bins over [0, 1], using
-    only non-empty bins), then ``np.polyfit`` of observed-vs-predicted.  Matches
-    the published calibration definition while avoiding sklearn's per-call
-    overhead in the 1000x bootstrap loop.
+
+def _calibration_slope(y: np.ndarray, lp: np.ndarray,
+                       max_iter: int = 25, tol: float = 1e-6):
+    """Slope b of logit(P(y=1)) = a + b*LP, by IRLS. Returns NaN on failure."""
+    # design matrix [1, LP]; warm-start at the perfectly-calibrated solution.
+    Xd = np.column_stack([np.ones_like(lp), lp])
+    beta = np.array([0.0, 1.0])
+    for _ in range(max_iter):
+        eta = np.clip(Xd @ beta, -30.0, 30.0)
+        mu = 1.0 / (1.0 + np.exp(-eta))
+        w = np.clip(mu * (1.0 - mu), 1e-10, None)
+        H = (Xd.T * w) @ Xd
+        g = Xd.T @ (y - mu)
+        try:
+            delta = np.linalg.solve(H, g)
+        except np.linalg.LinAlgError:
+            return np.nan
+        beta = beta + delta
+        if not np.all(np.isfinite(beta)):
+            return np.nan
+        if np.max(np.abs(delta)) < tol:
+            break
+    return float(beta[1])
+
+
+def _calibration_in_the_large(y: np.ndarray, lp: np.ndarray,
+                              max_iter: int = 25, tol: float = 1e-6):
+    """Intercept a of logit(P(y=1)) = a + LP (LP as offset), by IRLS."""
+    a = 0.0
+    for _ in range(max_iter):
+        eta = np.clip(a + lp, -30.0, 30.0)
+        mu = 1.0 / (1.0 + np.exp(-eta))
+        w = float(np.clip(mu * (1.0 - mu), 1e-10, None).sum())
+        g = float((y - mu).sum())
+        if w <= 0:
+            return np.nan
+        delta = g / w
+        a += delta
+        if not np.isfinite(a):
+            return np.nan
+        if abs(delta) < tol:
+            break
+    return float(a)
+
+
+def calibration_slope_intercept(y: np.ndarray, p: np.ndarray, bins: int = C.CALIB_BINS):
+    """Return the standard (slope, calibration-in-the-large intercept).
+
+    ``bins`` is accepted for backward compatibility but unused: the slope and
+    intercept are the regression-based estimands described in the module
+    docstring, fit on the logit of the predicted probabilities.
     """
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    binids = np.clip(np.digitize(p, edges[1:-1]), 0, bins - 1)
-    bin_total = np.bincount(binids, minlength=bins).astype(float)
-    bin_true = np.bincount(binids, weights=y.astype(float), minlength=bins)
-    bin_pred = np.bincount(binids, weights=p, minlength=bins)
-    nz = bin_total > 0
-    if nz.sum() < 2:
+    y = np.asarray(y, dtype=float)
+    lp = _logit(np.asarray(p, dtype=float))
+    if y.sum() == 0 or y.sum() == len(y):
         return np.nan, np.nan
-    prob_true = bin_true[nz] / bin_total[nz]
-    prob_pred = bin_pred[nz] / bin_total[nz]
-    slope, intercept = np.polyfit(prob_pred, prob_true, 1)
+    slope = _calibration_slope(y, lp)
+    intercept = _calibration_in_the_large(y, lp)
     return float(slope), float(intercept)
 
 

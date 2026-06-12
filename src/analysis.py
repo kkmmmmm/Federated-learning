@@ -25,7 +25,7 @@ from sklearn.model_selection import StratifiedKFold
 from . import config as C
 from . import data_utils as D
 from .models import FittedModel, fit_logreg
-from .flower_fl import run_fedavg, FLHistory
+from .flower_fl import run_fedavg, FLHistory, federated_intercept_recalibration
 from .calibration import point_metrics, bootstrap_metrics
 
 
@@ -38,6 +38,7 @@ class GlobalModels:
     centralized: FittedModel
     fl: FittedModel
     fl_history: FLHistory
+    fl_recal: FittedModel = None   # FedAvg with a federated intercept recalibration
 
 
 def _client_data(df, regions, scaler):
@@ -71,7 +72,15 @@ def build_global_models(df: pd.DataFrame, regions: list[int], penalty: str,
     client_data = _client_data(df, regions, scaler)
     fl_model, hist = run_fedavg(client_data, penalty, client_C, client_l1,
                                 C.N_FEATURES, record_history=record_history)
-    return GlobalModels(scaler, centralized, fl_model, hist)
+
+    # Federated calibration-in-the-large correction: keep the FedAvg slopes,
+    # shift only the intercept so total predicted == total observed across the
+    # training regions (sharing only per-site scalars, no raw data / no C).
+    delta = federated_intercept_recalibration(fl_model.coef, fl_model.intercept,
+                                              client_data)
+    fl_recal = FittedModel(coef=fl_model.coef, intercept=fl_model.intercept + delta,
+                           penalty=penalty, C=None, l1_ratio=None)
+    return GlobalModels(scaler, centralized, fl_model, hist, fl_recal)
 
 
 def _client_hparams(df, regions, scaler, penalty):
@@ -95,12 +104,31 @@ def fl_convergence_run(df: pd.DataFrame, penalty: str,
     the round-by-round descent of the global training loss is visible.  Each
     client uses its own locally-selected regularisation.
     """
+    import time
+    from scipy.special import expit
+    from sklearn.metrics import log_loss, roc_auc_score
+
     stats = [D.client_stats(D.region_arrays(df, r)[0]) for r in C.REGIONS]
     scaler = D.federated_scaler(stats)
     client_C, client_l1 = _client_hparams(df, C.REGIONS, scaler, penalty)
     client_data = _client_data(df, C.REGIONS, scaler)
-    _, hist = run_fedavg(client_data, penalty, client_C, client_l1, C.N_FEATURES,
-                         rounds=rounds, local_iters=local_iters, record_history=True)
+    fl_model, hist = run_fedavg(client_data, penalty, client_C, client_l1, C.N_FEATURES,
+                                rounds=rounds, local_iters=local_iters, record_history=True)
+
+    # Final step of the method: one federated intercept-recalibration round
+    # (clients return only aggregate scalars).  Record its wall-clock and the
+    # resulting drop in the global training loss so the convergence figure and
+    # the reported time reflect the *complete* procedure, not FedAvg alone.
+    Xs_all = np.vstack([Xs for Xs, _ in client_data])
+    y_all = np.concatenate([y for _, y in client_data])
+    t0 = time.perf_counter()
+    delta = federated_intercept_recalibration(fl_model.coef, fl_model.intercept,
+                                              client_data)
+    hist.recal_seconds = time.perf_counter() - t0
+    p = expit(Xs_all @ fl_model.coef + (fl_model.intercept + delta))
+    hist.recal_delta = float(delta)
+    hist.recal_logloss = float(log_loss(y_all, p, labels=[0, 1]))
+    hist.recal_auroc = float(roc_auc_score(y_all, p))
     return hist
 
 
@@ -145,8 +173,10 @@ def within_region(df: pd.DataFrame, penalty: str,
             # LORO global models on the test fold (target region excluded).
             m_cen = point_metrics(yte, _predict(gm.centralized, gm.scaler, Xte))
             m_fl = point_metrics(yte, _predict(gm.fl, gm.scaler, Xte))
+            m_flr = point_metrics(yte, _predict(gm.fl_recal, gm.scaler, Xte))
 
-            for name, m in (("Local", m_local), ("Centralized", m_cen), ("FL", m_fl)):
+            for name, m in (("Local", m_local), ("Centralized", m_cen),
+                            ("FL", m_fl), ("FL_recal", m_flr)):
                 rows.append(dict(Region=r, Fold=fold, Model=name, Penalty=penalty,
                                  **m))
     return pd.DataFrame(rows)
@@ -166,7 +196,8 @@ def _between_one_region(df, r, penalty, local_models, global_loro, n_boot):
         rows.append(dict(ValidationRegion=r, Source=i, Penalty=penalty,
                          **bootstrap_metrics(y, p, n_boot=n_boot)))
     gm = global_loro[r]                       # LORO globals
-    for name, mdl in (("Centralized", gm.centralized), ("FL", gm.fl)):
+    for name, mdl in (("Centralized", gm.centralized), ("FL", gm.fl),
+                      ("FL_recal", gm.fl_recal)):
         p = _predict(mdl, gm.scaler, X)
         rows.append(dict(ValidationRegion=r, Source=name, Penalty=penalty,
                          **bootstrap_metrics(y, p, n_boot=n_boot)))
@@ -193,18 +224,46 @@ def between_region(df: pd.DataFrame, penalty: str,
 # --------------------------------------------------------------------------- #
 # Coefficient PCA  (Figure 4)
 # --------------------------------------------------------------------------- #
-def coefficient_pca(local_models: dict[int, tuple], global_all: GlobalModels):
-    """PCA (PC1/PC2) of the standardized coefficients of the 18 models.
+def _to_global_coords(model: FittedModel, scaler: D.Scaler,
+                      mu_g: np.ndarray, sd_g: np.ndarray) -> np.ndarray:
+    """Re-express a model's (intercept, slopes) on a COMMON reference.
 
-    Rows = 16 local + Centralized + FL (all trained on full data); columns = the
-    17 standardized regression coefficients.
+    Each model is fitted on its own standardisation (local models use their own
+    region's mean/SD; global models use the federated scaler), so the raw
+    intercepts/slopes are not directly comparable.  We map every model onto the
+    same global standardisation: slopes per global-SD and the intercept as the
+    log-odds at the *global mean* covariate profile.  This makes the intercept
+    (calibration-in-the-large) comparable across models, so the recalibrated FL
+    model is a distinct point that sits closer to the centralized model.
+    """
+    beta_raw = model.coef / scaler.std_
+    b_raw = model.intercept - np.sum(model.coef * scaler.mean_ / scaler.std_)
+    beta_g = beta_raw * sd_g
+    b_g = b_raw + np.sum(beta_raw * mu_g)
+    return np.concatenate([[b_g], beta_g])
+
+
+def coefficient_pca(local_models: dict[int, tuple], global_all: GlobalModels):
+    """PCA (PC1/PC2) of the FULL model parameters of the 19 models.
+
+    Rows = 16 local + Centralized + FL + FL_recal; columns = the intercept
+    (calibration-in-the-large, at the global-mean profile) plus the 17 slopes,
+    all expressed on a common global standardisation and then column-standardised
+    so the logit-scale intercept does not dominate.  Including the intercept lets
+    the figure show FL's calibration-in-the-large offset (FL sits away from
+    Centralized) and its removal by recalibration (FL_recal moves back towards
+    Centralized).
     """
     from sklearn.decomposition import PCA
 
-    labels = [str(i) for i in C.REGIONS] + ["Centralized", "FL"]
-    mat = [local_models[i][0].coef for i in C.REGIONS]
-    mat.append(global_all.centralized.coef)
-    mat.append(global_all.fl.coef)
+    mu_g, sd_g = global_all.scaler.mean_, global_all.scaler.std_
+    labels = [str(i) for i in C.REGIONS] + ["Centralized", "FL", "FL_recal"]
+    mat = [_to_global_coords(local_models[i][0], local_models[i][1], mu_g, sd_g)
+           for i in C.REGIONS]
+    mat.append(_to_global_coords(global_all.centralized, global_all.scaler, mu_g, sd_g))
+    mat.append(_to_global_coords(global_all.fl, global_all.scaler, mu_g, sd_g))
+    mat.append(_to_global_coords(global_all.fl_recal, global_all.scaler, mu_g, sd_g))
     mat = np.vstack(mat)
-    pcs = PCA(n_components=2, random_state=C.RANDOM_STATE).fit_transform(mat)
+    Z = (mat - mat.mean(0)) / mat.std(0)        # column-standardise (18 params)
+    pcs = PCA(n_components=2, random_state=C.RANDOM_STATE).fit_transform(Z)
     return pd.DataFrame({"Index": labels, "PC1": pcs[:, 0], "PC2": pcs[:, 1]})
