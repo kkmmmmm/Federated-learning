@@ -5,9 +5,7 @@ and **federated** logistic-regression models predicting 30-day mortality after
 AMI, using the GUSTO-I trial data (40,830 patients across 16 regions).
 
 The federated learning is implemented with the **[Flower](https://flower.ai)
-framework** (FedAvg). This repository supersedes the earlier scripts at
-`yutatennis/Fedrated-learning` and `kkmmmmm/Federated-learning`, correcting
-several methodological issues (see **What was corrected** below).
+framework** (FedAvg). 
 
 ---
 
