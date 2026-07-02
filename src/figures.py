@@ -28,14 +28,14 @@ def _yticks(ylim, major):
     return np.round(np.arange(ylim[0], ylim[1] + major / 2, major), 4)
 
 
-_SRC_LABEL = {"Centralized": "Cent", "FL": "FL", "FL_recal": "FLrc"}
+_SRC_LABEL = {"Centralized": "Cent", "FL": "FL", "FL_recal": "FLrc", "FedAvg": "FedAvg"}
 
 
 def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
                  ylabel: str, suptitle: str, outpath: str,
                  ref_line: float | None = None, ylim=None, major: float | None = None,
                  extra_sources: list | None = None,
-                 figsize=(12.5, 6.1), dpi: int = 200):
+                 figsize=(12.5, 7.2), dpi: int = 300):
     # NB: ``suptitle`` is intentionally not drawn — the model (penalty) name is
     # already given in the figure caption in the manuscript/supplement, so the
     # freed vertical space is given back to the panels for readability.
@@ -60,41 +60,46 @@ def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
             yerr = [[max(p - lo, 0)], [max(up - p, 0)]]
             mfc = None
             if s == "Centralized":
-                col, mk, ms = "#1f77b4", "s", 4.5
+                col, mk, ms = "#0072B2", "s", 5.5
             elif s == "FL":
-                col, mk, ms = "#2ca02c", "D", 4.5
+                col, mk, ms = "#009E73", "D", 5.5
             elif s == "FL_recal":
-                col, mk, ms, mfc = "#2ca02c", "D", 5.0, "none"   # hollow = recalibrated FL
+                col, mk, ms, mfc = "#009E73", "D", 6.0, "none"   # hollow = recalibrated FL
+            elif s == "FedAvg":
+                col, mk, ms, mfc = "#ff7f0e", "D", 6.0, "none"   # uncorrected FedAvg
             elif s == red:
-                col, mk, ms = "red", "o", 3.5
+                col, mk, ms = "#D55E00", "o", 4.0
             else:
-                col, mk, ms = "black", "o", 3
+                col, mk, ms = "#333333", "o", 3.5
             ax.errorbar(x, p, yerr=yerr, fmt=mk, color=col, ms=ms,
                         ecolor=col, elinewidth=0.6, capsize=1.0, alpha=0.85,
                         markerfacecolor=(mfc if mfc else col))
         if ref_line is not None:
             ax.axhline(ref_line, color="grey", ls="--", lw=0.6)
-        ax.set_title(f"Region {r}", fontsize=8)
+        ax.set_title(f"Region {r}", fontsize=9)
         ax.set_xticks(xs)
         ax.set_xticklabels([f"R{s}" if s.isdigit() else _SRC_LABEL.get(s, s[:4])
-                            for s in order], rotation=90, fontsize=5)
-        ax.tick_params(axis="y", labelsize=7)
+                            for s in order], rotation=90, fontsize=6)
+        ax.tick_params(axis="y", labelsize=8)
         if ylim:
             ax.set_ylim(*ylim)
         if yticks is not None:
             ax.set_yticks(yticks)
     for ax in axes[:, 0]:
-        ax.set_ylabel(ylabel, fontsize=6)
+        ax.set_ylabel(ylabel, fontsize=8)
     handles = [
-        Line2D([], [], color="black", marker="o", ls="", label="Local (other regions)"),
-        Line2D([], [], color="red", marker="o", ls="", label=f"Local Region {red_region}"),
-        Line2D([], [], color="#1f77b4", marker="s", ls="", label="Centralized (excl. region)"),
-        Line2D([], [], color="#2ca02c", marker="D", ls="", label="FL (excl. region)"),
+        Line2D([], [], color="#333333", marker="o", ls="", label="Local (other regions)"),
+        Line2D([], [], color="#D55E00", marker="o", ls="", label=f"Local Region {red_region}"),
+        Line2D([], [], color="#0072B2", marker="s", ls="", label="Centralized (excl. region)"),
+        Line2D([], [], color="#009E73", marker="D", ls="", label="FL (excl. region)"),
     ]
     if "FL_recal" in extra:
-        handles.append(Line2D([], [], color="#2ca02c", marker="D", ls="",
+        handles.append(Line2D([], [], color="#009E73", marker="D", ls="",
                               markerfacecolor="none", label="FL recalibrated"))
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=7,
+    if "FedAvg" in extra:
+        handles.append(Line2D([], [], color="#ff7f0e", marker="D", ls="",
+                              markerfacecolor="none", label="FedAvg (uncorrected)"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=9,
                frameon=False, bbox_to_anchor=(0.5, 0.0))
     fig.tight_layout(rect=[0, 0.04, 1, 1.0])
     fig.savefig(outpath, dpi=dpi)
@@ -103,7 +108,7 @@ def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
 
 
 def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
-               figsize=(9.4, 6.0), dpi: int = 200):
+               figsize=(9.4, 6.0), dpi: int = 300):
     try:
         from adjustText import adjust_text
         have_adjust = True
@@ -127,42 +132,40 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
         for _, rr in df.iterrows():
             idx = str(rr["Index"])
             if idx == "FL":
-                ax.scatter(rr.PC1, rr.PC2, marker="D", color="#2ca02c", s=48, zorder=4)
-                texts.append(ax.text(rr.PC1, rr.PC2, "FL", color="#2ca02c",
-                                     fontsize=7, fontweight="bold"))
+                ax.scatter(rr.PC1, rr.PC2, marker="D", color="#009E73", s=48, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, "FL", color="#009E73",
+                                     fontsize=8.5, fontweight="bold"))
             elif idx == "FL_recal":
                 ax.scatter(rr.PC1, rr.PC2, marker="D", facecolors="none",
-                           edgecolors="#2ca02c", s=60, linewidths=1.4, zorder=5)
-                texts.append(ax.text(rr.PC1, rr.PC2, "FLrc", color="#2ca02c",
-                                     fontsize=7, fontweight="bold"))
+                           edgecolors="#009E73", s=60, linewidths=1.4, zorder=5)
+                texts.append(ax.text(rr.PC1, rr.PC2, "FLrc", color="#009E73",
+                                     fontsize=8.5, fontweight="bold"))
             elif idx == "Centralized":
-                ax.scatter(rr.PC1, rr.PC2, marker="^", color="#1f77b4", s=55, zorder=4)
-                texts.append(ax.text(rr.PC1, rr.PC2, "Cent", color="#1f77b4",
-                                     fontsize=7, fontweight="bold"))
+                ax.scatter(rr.PC1, rr.PC2, marker="^", color="#0072B2", s=55, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, "Cent", color="#0072B2",
+                                     fontsize=8.5, fontweight="bold"))
             elif idx == red:
-                ax.scatter(rr.PC1, rr.PC2, marker="o", color="red", s=42, zorder=4)
-                texts.append(ax.text(rr.PC1, rr.PC2, idx, color="red",
-                                     fontsize=7, fontweight="bold"))
+                ax.scatter(rr.PC1, rr.PC2, marker="o", color="#D55E00", s=42, zorder=4)
+                texts.append(ax.text(rr.PC1, rr.PC2, idx, color="#D55E00",
+                                     fontsize=8.5, fontweight="bold"))
             else:
-                ax.scatter(rr.PC1, rr.PC2, marker="o", color="black", s=20, zorder=3)
-                texts.append(ax.text(rr.PC1, rr.PC2, idx, fontsize=6))
+                ax.scatter(rr.PC1, rr.PC2, marker="o", color="#333333", s=20, zorder=3)
+                texts.append(ax.text(rr.PC1, rr.PC2, idx, fontsize=7.5))
         ax.set_xlim(*xlim); ax.set_ylim(*ylim)
         ax.axhline(0, color="grey", lw=0.4); ax.axvline(0, color="grey", lw=0.4)
-        ax.set_title(PEN_TITLE[pen], fontsize=10)
-        ax.tick_params(labelsize=6)
-        ax.set_xlabel("PC1", fontsize=7); ax.set_ylabel("PC2", fontsize=7)
+        ax.set_title(PEN_TITLE[pen], fontsize=12)
+        ax.tick_params(labelsize=8)
+        ax.set_xlabel("PC1", fontsize=10); ax.set_ylabel("PC2", fontsize=10)
         if have_adjust:
             adjust_text(texts, ax=ax, expand=(1.25, 1.5),
                         arrowprops=dict(arrowstyle="-", color="grey", lw=0.4))
     handles = [
-        Line2D([], [], color="black", marker="o", ls="", label="Region models"),
-        Line2D([], [], color="red", marker="o", ls="", label=f"Region {red}"),
-        Line2D([], [], color="#1f77b4", marker="^", ls="", label="Centralized"),
-        Line2D([], [], color="#2ca02c", marker="D", ls="", label="FL"),
-        Line2D([], [], color="#2ca02c", marker="D", ls="", markerfacecolor="none",
-               label="FL recalibrated"),
+        Line2D([], [], color="#333333", marker="o", ls="", label="Region models"),
+        Line2D([], [], color="#D55E00", marker="o", ls="", label=f"Region {red}"),
+        Line2D([], [], color="#0072B2", marker="^", ls="", label="Centralized"),
+        Line2D([], [], color="#009E73", marker="D", ls="", label="FL"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=5, fontsize=8, frameon=False)
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=10, frameon=False)
     # Overall title omitted — described in the figure caption. Per-panel penalty
     # labels are kept so each quadrant remains identifiable.
     fig.tight_layout(rect=[0, 0.05, 1, 1.0])
@@ -171,9 +174,9 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
     plt.close(fig)
 
 
-def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int = 200):
+def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int = 300):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
-    colors = {"none": "black", "l1": "#1f77b4", "l2": "#2ca02c", "elasticnet": "#d62728"}
+    colors = {"none": "#333333", "l1": "#0072B2", "l2": "#009E73", "elasticnet": "#D55E00"}
     have_recal = False
     for pen, h in conv.items():
         ax1.plot(h.rounds, h.train_logloss, marker="o", ms=3, color=colors[pen],
@@ -202,8 +205,8 @@ def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int =
                               markeredgecolor="k", markeredgewidth=0.4,
                               label="after intercept recalibration"))
         labels.append("after intercept recalibration")
-    ax1.legend(handles, labels, fontsize=7)
-    ax2.legend(fontsize=8)
+    ax1.legend(handles, labels, fontsize=9)
+    ax2.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(outpath, dpi=dpi)
     fig.savefig(outpath.replace(".png", ".pdf"))

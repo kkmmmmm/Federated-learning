@@ -80,6 +80,20 @@ def main():
     # Figures
     os.makedirs(C.FIG_DIR, exist_ok=True)
     # ylim / major-tick matched to the original Excel charts
+    # "FL" denotes the proposed method (FedAvg + intercept recalibration): a single
+    # FL is shown in every figure; the uncorrected FedAvg appears only in Table S3.
+    def remap(df, metric):
+        df = df.copy(); df["Source"] = df["Source"].astype(str)
+        if metric == "CalibrationIntercept":
+            # keep the uncorrected FedAvg as a separate series so the
+            # calibration-in-the-large offset that recalibration removes is visible
+            df.loc[df.Source == "FL", "Source"] = "FedAvg"
+            df.loc[df.Source == "FL_recal", "Source"] = "FL"
+        else:
+            df = df[df.Source != "FL"]
+            df.loc[df.Source == "FL_recal", "Source"] = "FL"
+        return df
+
     specs = [
         ("AUROC", C.RED_REGION_AUROC, "AUROC", (0.68, 0.88), 0.04, None, None,
          {"l1": "Figure1_AUROC_L1", "none": "FigureS1_AUROC_noreg",
@@ -88,18 +102,25 @@ def main():
          {"l1": "Figure2_slope_L1", "none": "FigureS4_slope_noreg",
           "l2": "FigureS5_slope_L2", "elasticnet": "FigureS6_slope_EN"}),
         ("CalibrationIntercept", C.RED_REGION_CALIB, "Calibration intercept", (-0.9, 0.9), 0.3, 0.0,
-         ["FL_recal"],
+         ["FedAvg"],
          {"l1": "Figure3_intercept_L1", "none": "FigureS7_intercept_noreg",
           "l2": "FigureS8_intercept_L2", "elasticnet": "FigureS9_intercept_EN"}),
     ]
     for metric, red, ylab, ylim, major, ref, extra, names in specs:
         for pen in present:
-            F.panel_figure(between[between["Penalty"] == pen], metric, red, ylab,
+            dfm = remap(between[between["Penalty"] == pen], metric)
+            F.panel_figure(dfm, metric, red, ylab,
                            f"{ylab} ({C.PENALTY_LABEL[pen]})",
                            os.path.join(C.FIG_DIR, names[pen] + ".png"),
                            ref_line=ref, ylim=ylim, major=major, extra_sources=extra)
     if pca:
-        F.pca_figure(pca, os.path.join(C.FIG_DIR, "Figure4_PCA.png"))
+        pca_y = {}
+        for pen, df in pca.items():
+            df = df.copy(); df["Index"] = df["Index"].astype(str)
+            df = df[df.Index != "FL"]
+            df.loc[df.Index == "FL_recal", "Index"] = "FL"
+            pca_y[pen] = df
+        F.pca_figure(pca_y, os.path.join(C.FIG_DIR, "Figure4_PCA.png"))
     if conv:
         F.convergence_figure(conv, os.path.join(C.FIG_DIR, "FL_convergence.png"))
     print("Regenerated Excel workbooks and figures.")

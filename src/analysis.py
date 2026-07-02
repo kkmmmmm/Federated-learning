@@ -97,7 +97,7 @@ def _client_hparams(df, regions, scaler, penalty):
 
 
 def fl_convergence_run(df: pd.DataFrame, penalty: str,
-                       rounds: int = 40, local_iters: int = 1) -> FLHistory:
+                       rounds: int = C.FL_ROUNDS, local_iters: int = 1) -> FLHistory:
     """Dedicated FedAvg run (all 16 regions) for the convergence figure.
 
     Uses one local iteration per round and logs from the zero initialisation so
