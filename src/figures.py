@@ -4,9 +4,9 @@ Figures are rendered at their *final* physical size (figsize in inches) and high
 DPI, so they can be placed in Word at native size without any resizing/stretching.
 
 * ``panel_figure``      -- 4x4 grid (one panel per validation region) of point
-  estimates with 95% CI error bars (Figures 1-3 and S1-S9). y-axis range and
+  estimates with 95% CI error bars (Figures 2-4 and S2-S10). y-axis range and
   tick spacing match the original Excel charts.
-* ``pca_figure``        -- Figure 4: PC1/PC2 scatter of model coefficients with
+* ``pca_figure``        -- Figure 5: PC1/PC2 scatter of model coefficients with
   shared (aligned) axes across penalties and non-overlapping labels.
 * ``convergence_figure``-- FL global training log-loss / AUROC vs round.
 """
@@ -93,9 +93,10 @@ def panel_figure(between_pen: pd.DataFrame, metric: str, red_region: int,
     # NB: ``suptitle`` is intentionally not drawn — the model (penalty) name is
     # already given in the figure caption in the manuscript/supplement, so the
     # freed vertical space is given back to the panels for readability.
-    # ``extra_sources`` (e.g. ["FL_recal"]) appends the recalibrated FL model;
-    # used only for the calibration-intercept figure (it is identical to FL for
-    # AUROC and the calibration slope, an intercept-only correction).
+    # ``extra_sources`` (e.g. ["FedAvg"]) appends the uncorrected FedAvg model;
+    # used only for the calibration-intercept figure (FL and the uncorrected
+    # FedAvg are identical for AUROC and the calibration slope, an intercept-only
+    # correction).
     extra = extra_sources or []
     fig, axes = plt.subplots(4, 4, figsize=figsize, sharey=True)
     red = str(red_region)
