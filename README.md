@@ -120,12 +120,15 @@ uncorrected FedAvg model so the calibration-in-the-large offset removed by the
 recalibration is visible.
 
 ### Full-parameter PCA (Figure 5)
-Principal component analysis of the full parameters of the 19 full-data models
-(16 local + Centralized + FL + recalibrated FL): the 17 standardised slopes
+Principal component analysis of the full parameters of the 18 models shown in the
+manuscript: 16 local models, Centralized, and FL, where **FL** denotes the
+recalibrated federated model. Each model contributes the 17 standardised slopes
 **and the intercept** (calibration-in-the-large), expressed on a common
 standardisation. Including the intercept makes the FL calibration-in-the-large
 offset visible as a separation from the centralized model, with the recalibrated
-FL sitting closer to it (`src/analysis.py:coefficient_pca`).
+FL sitting closer to it. The uncorrected FedAvg model is computed internally but
+dropped from the final PCA output (`remap_pca`), so it does not appear in
+Figure 5 (`src/analysis.py:coefficient_pca`, `src/output_utils.py:remap_pca`).
 
 ### FL convergence
 Global training log-loss and AUROC are logged each round; the converged round,
