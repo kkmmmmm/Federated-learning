@@ -82,7 +82,8 @@ CV_SCORING = "roc_auc"
 # --------------------------------------------------------------------------- #
 # Federated-learning (FedAvg) hyper-parameters
 # --------------------------------------------------------------------------- #
-FL_ROUNDS = 60              # max communication rounds
+FL_ROUNDS = 60              # fixed communication rounds (convergence is monitored,
+                            # not used as a stopping rule; see flower_fl.py)
 FL_LOCAL_EPOCHS = 1         # local epochs per round (full-batch passes)
 FL_CONV_TOL = 1e-4          # |Δ global log-loss| threshold for convergence
 FL_CONV_PATIENCE = 3        # consecutive rounds below tol -> "converged"

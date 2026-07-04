@@ -73,15 +73,16 @@ global model, takes a local update on its own standardised data — using a
 regularisation strength `C` (and elastic-net `l1_ratio`) selected by
 cross-validation **within that client** — and returns its regression
 coefficients; the server aggregates them by sample-size-weighted averaging. All
-16 regions participate every round, and rounds repeat until the global training
-loss converges (`src/flower_fl.py`).
+16 regions participate in every round. Each FedAvg model is trained for a fixed
+60 communication rounds, and the global training log-loss is monitored to
+characterise convergence (`src/flower_fl.py`).
 
 ### Federated intercept recalibration
 Because FedAvg averages per-region coefficients, the aggregated model does not in
 general satisfy the pooled intercept score equation, leaving a systematic
 calibration-in-the-large offset under variable-selecting penalties (L1 /
-elastic-net). After convergence the global model is therefore finalised with a
-single **intercept-recalibration step**: the aggregated slopes are held fixed and
+elastic-net). After the fixed 60 rounds the global model is therefore finalised
+with a single **intercept-recalibration step**: the aggregated slopes are held fixed and
 the intercept is shifted so that, summed across the participating regions, the
 total predicted probability equals the total number of observed events. For this
 step each client returns only three aggregate scalars — its sum of predicted
