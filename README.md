@@ -50,11 +50,14 @@ Outputs are written to `outputs/`:
 | `PCA.xlsx` | **Figure 5** source data |
 | `figures/*.png`, `*.pdf` | Publication-format figures, named by manuscript figure number |
 
-Throughout the outputs, **FL** denotes the *recalibrated* federated model (FedAvg
-followed by the federated intercept correction), matching the manuscript. The
-uncorrected FedAvg model is shown only as an extra series on the
-calibration-intercept output (Figure 4 / S8–S10) and as a `FedAvg` row in the
-`coefficients` sheet.
+In the publication-ready figure-data workbooks and figures, **FL** denotes the
+*recalibrated* federated model (FedAvg followed by the federated intercept
+correction), matching the manuscript. The uncorrected FedAvg model is shown only
+as an extra series on the calibration-intercept output (Figure 4 / S8–S10) and as
+a `FedAvg` row in the `coefficients` sheet. The comprehensive `results.xlsx`
+workbook additionally contains raw diagnostic sheets (`within_region_folds`,
+`between_region`, `PCA_*`) in which the internal labels `FL` (uncorrected FedAvg)
+and `FL_recal` (recalibrated) are both retained.
 
 ---
 
@@ -154,6 +157,11 @@ src/
 flower_distributed/        networked Flower deployment (server + 16 clients)
 ```
 
-The in-process FedAvg in `src/flower_fl.py` and the networked deployment in
-`flower_distributed/` implement the same algorithm; the former replaces gRPC
-transport with direct calls for full reproducibility.
+The manuscript analyses are reproduced solely by the in-process implementation in
+`src/flower_fl.py`. The `flower_distributed/` directory provides a networked
+Flower demonstration of coefficient aggregation using the shared federated scaler,
+but it is **not** the source of the manuscript results and does not implement the
+full analysis pipeline: it omits the per-client cross-validated hyper-parameter
+selection (clients take `--C` / `--l1_ratio` as arguments) and the federated
+intercept recalibration, and it uses a different number of local iterations
+(`--local_iters`, default 5, vs. one local update in the main analysis).

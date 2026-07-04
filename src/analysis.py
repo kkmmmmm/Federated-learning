@@ -222,7 +222,7 @@ def between_region(df: pd.DataFrame, penalty: str,
 
 
 # --------------------------------------------------------------------------- #
-# Coefficient PCA  (Figure 4)
+# Coefficient PCA  (Figure 5)
 # --------------------------------------------------------------------------- #
 def _to_global_coords(model: FittedModel, scaler: D.Scaler,
                       mu_g: np.ndarray, sd_g: np.ndarray) -> np.ndarray:
@@ -244,15 +244,17 @@ def _to_global_coords(model: FittedModel, scaler: D.Scaler,
 
 
 def coefficient_pca(local_models: dict[int, tuple], global_all: GlobalModels):
-    """PCA (PC1/PC2) of the FULL model parameters of the 19 models.
+    """PCA (PC1/PC2) of the FULL model parameters.
 
-    Rows = 16 local + Centralized + FL + FL_recal; columns = the intercept
-    (calibration-in-the-large, at the global-mean profile) plus the 17 slopes,
-    all expressed on a common global standardisation and then column-standardised
-    so the logit-scale intercept does not dominate.  Including the intercept lets
-    the figure show FL's calibration-in-the-large offset (FL sits away from
-    Centralized) and its removal by recalibration (FL_recal moves back towards
-    Centralized).
+    Internally computes 19 rows: 16 local + Centralized + FL (uncorrected FedAvg)
+    + FL_recal (recalibrated).  For the manuscript output, output_utils.remap_pca
+    drops the uncorrected FedAvg and displays FL_recal as FL, yielding the 18
+    models shown in Figure 5.  Columns = the intercept (calibration-in-the-large,
+    at the global-mean profile) plus the 17 slopes, all expressed on a common
+    global standardisation and then column-standardised so the logit-scale
+    intercept does not dominate.  Including the intercept lets the figure show
+    FL's calibration-in-the-large offset (FL sits away from Centralized) and its
+    removal by recalibration (FL_recal moves back towards Centralized).
     """
     from sklearn.decomposition import PCA
 
