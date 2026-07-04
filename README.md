@@ -75,7 +75,7 @@ cross-validation **within that client** — and returns its regression
 coefficients; the server aggregates them by sample-size-weighted averaging. All
 16 regions participate in every round. Each FedAvg model is trained for a fixed
 60 communication rounds, and the global training log-loss is monitored to
-characterise convergence (`src/flower_fl.py`).
+characterise convergence rather than used as a stopping rule (`src/flower_fl.py`).
 
 ### Federated intercept recalibration
 Because FedAvg averages per-region coefficients, the aggregated model does not in
