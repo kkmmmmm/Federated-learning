@@ -1,3 +1,6 @@
+# Tested with Python 3.13.14.
+# For an exact reproduction of the published analysis use the pinned versions in
+# requirements_exact.txt (or environment.yml). The bounds below are for reuse.
 flwr>=1.13
 scikit-learn>=1.3
 pandas>=2.0
@@ -5,3 +8,4 @@ numpy>=1.24
 scipy>=1.10
 matplotlib>=3.7
 openpyxl>=3.1
+joblib>=1.3

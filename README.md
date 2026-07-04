@@ -43,12 +43,18 @@ Outputs are written to `outputs/`:
 
 | File | Contents |
 |------|----------|
-| `results.xlsx` | Table 2 / S2 (within-region mean±SD AUROC), raw folds, between-region long format, FL convergence + recalibration, coefficients |
-| `AUROC.xlsx` | Figure 1 / S1–S3 source data, per-region block layout |
-| `calibration_slope.xlsx` | Figure 2 / S4–S6 source data |
-| `calibration_intercept.xlsx` | Figure 3 / S7–S9 source data |
-| `PCA.xlsx` | Figure 4 source data |
-| `figures/*.png`, `*.pdf` | Publication-format figures |
+| `results.xlsx` | Table 2 / S3 (within-region mean±SD AUROC → **Figure 1**), raw folds, between-region long format, FL convergence + recalibration, coefficients |
+| `AUROC.xlsx` | **Figure 2** / S2–S4 source data (between-region AUROC), per-region block layout |
+| `calibration_slope.xlsx` | **Figure 3** / S5–S7 source data |
+| `calibration_intercept.xlsx` | **Figure 4** / S8–S10 source data (includes the uncorrected FedAvg series) |
+| `PCA.xlsx` | **Figure 5** source data |
+| `figures/*.png`, `*.pdf` | Publication-format figures, named by manuscript figure number |
+
+Throughout the outputs, **FL** denotes the *recalibrated* federated model (FedAvg
+followed by the federated intercept correction), matching the manuscript. The
+uncorrected FedAvg model is shown only as an extra series on the
+calibration-intercept output (Figure 4 / S8–S10) and as a `FedAvg` row in the
+`coefficients` sheet.
 
 ---
 
@@ -97,19 +103,22 @@ wall-clock time includes this step.
 Point estimates are reported with 95% bootstrap confidence intervals (1000
 resamples) (`src/calibration.py`).
 
-### Within-region validation (Table 2 / S2)
+### Within-region validation (Figure 1, Table 2 / S3)
 Stratified 5-fold CV per region. Local models train on 4/5 and test on 1/5.
 The global models use a **leave-one-region-out (LORO)** scheme — for each target
 region they are trained on the 15 other regions and evaluated on that region's
 held-out 1/5 test folds, so no test data enter training
 (`src/analysis.py:within_region`).
 
-### Between-region validation (Figures 1–3 / S1–S9)
+### Between-region validation (Figures 2–4 / S2–S10)
 Every local model is applied to every other region, alongside the LORO global
-models (Centralized, FL, and recalibrated FL). The local model with the largest
-performance deviation (Region 10) is highlighted.
+models (Centralized and FL, where FL is the recalibrated federated model). The
+local model with the largest performance deviation (Region 10) is highlighted.
+The calibration-intercept panels (Figure 4 / S8–S10) additionally show the
+uncorrected FedAvg model so the calibration-in-the-large offset removed by the
+recalibration is visible.
 
-### Full-parameter PCA (Figure 4)
+### Full-parameter PCA (Figure 5)
 Principal component analysis of the full parameters of the 19 full-data models
 (16 local + Centralized + FL + recalibrated FL): the 17 standardised slopes
 **and the intercept** (calibration-in-the-large), expressed on a common

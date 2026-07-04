@@ -74,7 +74,10 @@ import numpy as np  # noqa: E402
 C_GRID = np.logspace(-3, 3, 7)
 L1_RATIO_GRID = [0.1, 0.5, 0.9]
 CV_FOLDS = 5
-CV_SCORING = "roc_auc"      # manuscript: pick C with highest validation AUROC
+# AUROC is the CV optimization criterion; the winner is resolved with a
+# one-standard-error rule (the least-regularized model within 1 SE of the best
+# mean AUROC) in models._auroc_optimal_params. See Supplemental Methods.
+CV_SCORING = "roc_auc"
 
 # --------------------------------------------------------------------------- #
 # Federated-learning (FedAvg) hyper-parameters
@@ -96,7 +99,7 @@ RANDOM_STATE = 42
 # outlier in coefficient space (Figure 4 PCA).  Used consistently for AUROC,
 # calibration slope and calibration intercept so a single region's aberrant
 # model explains both its poor discrimination and its poor calibration.
-RED_REGION_AUROC = 10       # Figure 1 / S1-S3
-RED_REGION_CALIB = 10       # Figures 2,3 / S4-S9 (was 16; under the standard
+RED_REGION_AUROC = 10       # Figure 2 / S2-S4
+RED_REGION_CALIB = 10       # Figures 3,4 / S5-S10 (was 16; under the standard
                             # calibration definition no single region dominates,
                             # so we highlight the overall outlier, Region 10)

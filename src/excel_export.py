@@ -17,15 +17,21 @@ import numpy as np
 import pandas as pd
 
 from . import config as C
+from . import output_utils as O
 
 PEN_SUFFIX = {"none": "noreg", "l1": "L1", "l2": "L2", "elasticnet": "EN"}
 METRIC_PREFIX = {"AUROC": "AUROC", "CalibrationSlope": "slope",
                  "CalibrationIntercept": "intercept"}
 
 
-def _source_order(r: int):
-    foreign = [i for i in C.REGIONS if i != r]
-    return foreign + ["Centralized", "FL"]
+def _source_order(r: int, metric: str):
+    foreign = [str(i) for i in C.REGIONS if i != r]
+    tail = ["Centralized", "FL"]
+    # The calibration-intercept output also carries the uncorrected FedAvg model,
+    # so the offset that recalibration removes is documented in the source data.
+    if metric == "CalibrationIntercept":
+        tail.append("FedAvg")
+    return foreign + tail
 
 
 def _block_sheet(ws, between_pen: pd.DataFrame, metric: str):
@@ -35,7 +41,7 @@ def _block_sheet(ws, between_pen: pd.DataFrame, metric: str):
         sub = between_pen[between_pen["ValidationRegion"] == r].copy()
         sub["Source"] = sub["Source"].astype(str)
         sub = sub.set_index("Source")
-        order = [str(i) for i in C.REGIONS if i != r] + ["Centralized", "FL"]
+        order = [s for s in _source_order(r, metric) if s in sub.index]
         headers = [f"region{s}" if s.isdigit() else s for s in order]
         pts, los, ups, eu, el = [], [], [], [], []
         for s in order:
@@ -69,7 +75,10 @@ def write_block_workbook(between: pd.DataFrame, metric: str, path: str):
     present = [p for p in C.PENALTIES if (between["Penalty"] == p).any()]
     for pen in present:
         ws = wb.create_sheet(f"{METRIC_PREFIX[metric]}_{PEN_SUFFIX[pen]}")
-        _block_sheet(ws, between[between["Penalty"] == pen], metric)
+        # Relabel FL_recal -> FL (and, for the intercept, keep the uncorrected
+        # FedAvg) so the exported numbers match the manuscript's FL definition.
+        pen_df = O.remap_sources(between[between["Penalty"] == pen], metric)
+        _block_sheet(ws, pen_df, metric)
     wb.save(path)
 
 
@@ -81,6 +90,9 @@ def write_pca_workbook(pca: dict[str, pd.DataFrame], path: str):
     ws.title = "fig4_PCA"
 
     # top block: L1 (B-D), L2 (G-I), EN (L-N)
+    # Show the recalibrated federated model as FL (drop the uncorrected point),
+    # matching the manuscript's Figure 5.
+    pca = {pen: O.remap_pca(df) for pen, df in pca.items()}
     groups = [("l1", 1), ("l2", 6), ("elasticnet", 11)]
     ws.cell(1, 1, "Sheet")
     for pen, c0 in groups:
@@ -120,7 +132,10 @@ def _within_summary(within: pd.DataFrame) -> pd.DataFrame:
 
 
 def _table_like(within: pd.DataFrame, penalty: str, df_counts) -> pd.DataFrame:
-    """Build a Table 2 / S2-style frame for one penalty."""
+    """Build a Table 2 / S3-style frame for one penalty."""
+    # Report the recalibrated federated model as FL (AUROC is unchanged by the
+    # intercept-only correction, but the label must match the manuscript).
+    within = O.remap_sources(within, "AUROC", col="Model")
     s = _within_summary(within)
     s = s[s["Penalty"] == penalty]
     piv = s.pivot(index="Region", columns="Model", values="AUROC_mean_sd")

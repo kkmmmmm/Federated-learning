@@ -44,10 +44,13 @@ def collect_coefficients(models: dict) -> pd.DataFrame:
             rows.append(dict(Penalty=pen, Model=f"Local_region{i}",
                              Intercept=mdl.intercept,
                              **dict(zip(C.FEATURES, mdl.coef))))
-        for name in ("centralized", "fl"):
+        # FL denotes the recalibrated federated model (fl_recal); the uncorrected
+        # FedAvg is reported separately so its calibration-in-the-large offset (an
+        # intercept-only difference) stays inspectable.
+        for name, label in (("centralized", "Centralized"),
+                            ("fl_recal", "FL"), ("fl", "FedAvg")):
             mdl = getattr(m["global_all"], name)
-            rows.append(dict(Penalty=pen, Model={"centralized": "Centralized",
-                                                 "fl": "FL"}[name],
+            rows.append(dict(Penalty=pen, Model=label,
                              Intercept=mdl.intercept,
                              **dict(zip(C.FEATURES, mdl.coef))))
     return pd.DataFrame(rows)
@@ -113,25 +116,13 @@ def main():
     print("  Excel written")
 
     # ----- Figures -------------------------------------------------------- #
-    fig_specs = [
-        ("AUROC", C.RED_REGION_AUROC, "AUROC", (0.55, 1.0), None,
-         {"l1": "Figure1_AUROC_L1", "none": "FigureS1_AUROC_noreg",
-          "l2": "FigureS2_AUROC_L2", "elasticnet": "FigureS3_AUROC_EN"}),
-        ("CalibrationSlope", C.RED_REGION_CALIB, "Calibration slope", None, 1.0,
-         {"l1": "Figure2_slope_L1", "none": "FigureS4_slope_noreg",
-          "l2": "FigureS5_slope_L2", "elasticnet": "FigureS6_slope_EN"}),
-        ("CalibrationIntercept", C.RED_REGION_CALIB, "Calibration intercept", None, 0.0,
-         {"l1": "Figure3_intercept_L1", "none": "FigureS7_intercept_noreg",
-          "l2": "FigureS8_intercept_L2", "elasticnet": "FigureS9_intercept_EN"}),
-    ]
-    for metric, red, ylab, ylim, ref, names in fig_specs:
-        for pen in args.penalties:
-            F.panel_figure(between[between["Penalty"] == pen], metric, red, ylab,
-                           f"{ylab} ({C.PENALTY_LABEL[pen]})",
-                           os.path.join(C.FIG_DIR, names[pen] + ".png"),
-                           ref_line=ref, ylim=ylim)
-    F.pca_figure(pca, os.path.join(C.FIG_DIR, "Figure4_PCA.png"))
-    F.convergence_figure(conv, os.path.join(C.FIG_DIR, "FL_convergence.png"))
+    # Figure numbering + the FL_recal->FL remap live in src/figures.py so this
+    # path and regen_figures.py always emit identical, manuscript-consistent
+    # figures (FL = recalibrated federated model; uncorrected FedAvg only on the
+    # calibration-intercept panels).
+    F.render_between_panels(between, C.FIG_DIR, penalties=args.penalties)
+    F.render_pca(pca, C.FIG_DIR)
+    F.convergence_figure(conv, os.path.join(C.FIG_DIR, "FigureS1_FL_convergence.png"))
     print("  Figures written. Done.")
 
 

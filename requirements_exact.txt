@@ -1,0 +1,15 @@
+# Exact package versions used for the published analysis (Python 3.13.14).
+# For a faithful reproduction install these pinned versions:
+#     python -m pip install -r requirements_exact.txt
+# requirements.txt keeps looser lower bounds for general reuse.
+flwr==1.31.0
+scikit-learn==1.6.1
+pandas==2.3.0
+numpy==2.3.1
+scipy==1.16.3
+matplotlib==3.10.8
+openpyxl==3.1.5
+joblib==1.5.2
+# Optional: nicer non-overlapping labels on the PCA figure (Figure 5). The code
+# falls back gracefully if it is absent.
+adjustText==1.4.0

@@ -12,6 +12,8 @@ DPI, so they can be placed in Word at native size without any resizing/stretchin
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -20,8 +22,60 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 from . import config as C
+from . import output_utils as O
 
 PEN_TITLE = C.PENALTY_LABEL
+
+# --------------------------------------------------------------------------- #
+# Publication figure specs (manuscript figure numbers)
+#   Figure 1  within-region cross-validated AUROC  (assembled from Table S3)
+#   Figure 2  between-region AUROC
+#   Figure 3  calibration slope
+#   Figure 4  calibration intercept (calibration-in-the-large; also shows FedAvg)
+#   Figure 5  full-parameter PCA
+#   Figure S1 FL convergence;  S2-S4 AUROC;  S5-S7 slope;  S8-S10 intercept
+# The single "FL" series drawn in every panel is the *recalibrated* federated
+# model; the uncorrected FedAvg appears only as the extra series on Figure 4.
+# --------------------------------------------------------------------------- #
+_BETWEEN_SPECS = [
+    ("AUROC", C.RED_REGION_AUROC, "AUROC", (0.68, 0.88), 0.04, None, None,
+     {"l1": "Figure2_AUROC_L1", "none": "FigureS2_AUROC_noreg",
+      "l2": "FigureS3_AUROC_L2", "elasticnet": "FigureS4_AUROC_EN"}),
+    ("CalibrationSlope", C.RED_REGION_CALIB, "Calibration slope", (0.5, 1.5), 0.25, 1.0, None,
+     {"l1": "Figure3_slope_L1", "none": "FigureS5_slope_noreg",
+      "l2": "FigureS6_slope_L2", "elasticnet": "FigureS7_slope_EN"}),
+    ("CalibrationIntercept", C.RED_REGION_CALIB, "Calibration intercept", (-0.9, 0.9), 0.3, 0.0,
+     ["FedAvg"],
+     {"l1": "Figure4_intercept_L1", "none": "FigureS8_intercept_noreg",
+      "l2": "FigureS9_intercept_L2", "elasticnet": "FigureS10_intercept_EN"}),
+]
+
+
+def render_between_panels(between: pd.DataFrame, fig_dir: str, penalties=None):
+    """Draw the between-region panel figures (Figures 2-4 / S2-S10).
+
+    Every frame is funnelled through ``output_utils.remap_sources`` so the
+    recalibrated model is shown as FL and the intercept panels additionally carry
+    the uncorrected FedAvg series.  Shared by ``run_all`` and ``regen_figures`` so
+    the two entry points can never produce different figures.
+    """
+    os.makedirs(fig_dir, exist_ok=True)
+    candidates = penalties if penalties is not None else C.PENALTIES
+    present = [p for p in candidates if (between["Penalty"] == p).any()]
+    for metric, red, ylab, ylim, major, ref, extra, names in _BETWEEN_SPECS:
+        for pen in present:
+            dfm = O.remap_sources(between[between["Penalty"] == pen], metric)
+            panel_figure(dfm, metric, red, ylab,
+                         f"{ylab} ({C.PENALTY_LABEL[pen]})",
+                         os.path.join(fig_dir, names[pen] + ".png"),
+                         ref_line=ref, ylim=ylim, major=major, extra_sources=extra)
+
+
+def render_pca(pca: dict[str, pd.DataFrame], fig_dir: str):
+    """Draw the full-parameter PCA figure (Figure 5), showing FL_recal as FL."""
+    os.makedirs(fig_dir, exist_ok=True)
+    pca_y = {pen: O.remap_pca(df) for pen, df in pca.items()}
+    pca_figure(pca_y, os.path.join(fig_dir, "Figure5_PCA.png"))
 
 
 def _yticks(ylim, major):
@@ -174,39 +228,73 @@ def pca_figure(pca: dict[str, pd.DataFrame], outpath: str,
     plt.close(fig)
 
 
-def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int = 300):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
-    colors = {"none": "#333333", "l1": "#0072B2", "l2": "#009E73", "elasticnet": "#D55E00"}
+def convergence_figure(conv: dict, outpath: str, figsize=(12.5, 4.6), dpi: int = 300,
+                       xmax: float = 6):
+    """FL global training log-loss / AUROC vs communication round.
+
+    The main x-axis is zoomed to the first ``xmax`` rounds, where the methods
+    differ; the flat plateau beyond that is omitted (the loss changes negligibly
+    thereafter).  A narrow right sub-panel (broken axis) shows the model after
+    the final federated intercept recalibration.
+    """
+    # Distinct colour + line style + marker per method so coincident trajectories
+    # stay separable: "none" and L2 overlap almost exactly (the CV-selected L2
+    # penalty is very weak here), and L1 and Elastic Net nearly overlap.  The
+    # overlapping partner is drawn on top with a broken line (dotted/dashed) and
+    # a higher z-order so the line underneath remains visible.
+    STY = {
+        "none":       dict(color="#333333", ls="-",  lw=2.4, marker="o", ms=3.5, z=2),
+        "l2":         dict(color="#009E73", ls=":",  lw=2.0, marker="^", ms=5.0, z=4),
+        "elasticnet": dict(color="#D55E00", ls="-",  lw=2.4, marker="D", ms=3.5, z=2),
+        "l1":         dict(color="#0072B2", ls="--", lw=1.7, marker="s", ms=4.0, z=4),
+    }
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(1, 5, width_ratios=[10, 1.4, 1.8, 10, 1.4], wspace=0.06)
+    ax1 = fig.add_subplot(gs[0, 0]); ax1r = fig.add_subplot(gs[0, 1], sharey=ax1)
+    ax2 = fig.add_subplot(gs[0, 3]); ax2r = fig.add_subplot(gs[0, 4], sharey=ax2)
+
     have_recal = False
     for pen, h in conv.items():
-        ax1.plot(h.rounds, h.train_logloss, marker="o", ms=3, color=colors[pen],
-                 label=PEN_TITLE[pen])
-        ax2.plot(h.rounds, h.train_auroc, marker="o", ms=3, color=colors[pen],
-                 label=PEN_TITLE[pen])
-        if h.converged_round:
-            ax1.axvline(h.converged_round, color=colors[pen], ls=":", lw=0.8)
-        # Final federated intercept-recalibration step (a single extra round).
+        s = STY[pen]
+        line_kw = dict(color=s["color"], ls=s["ls"], lw=s["lw"],
+                       marker=s["marker"], ms=s["ms"], zorder=s["z"])
+        ax1.plot(h.rounds, h.train_logloss, label=PEN_TITLE[pen], **line_kw)
+        ax2.plot(h.rounds, h.train_auroc, label=PEN_TITLE[pen], **line_kw)
         rll = getattr(h, "recal_logloss", None)
         rau = getattr(h, "recal_auroc", None)
-        if rll is not None and h.rounds:
-            xr = h.rounds[-1] + 1
-            ax1.plot([h.rounds[-1], xr], [h.train_logloss[-1], rll], color=colors[pen],
-                     ls="-", lw=0.8)
-            ax1.plot(xr, rll, marker="*", ms=11, color=colors[pen],
-                     markeredgecolor="k", markeredgewidth=0.4, zorder=5)
-            ax2.plot(xr, rau, marker="*", ms=11, color=colors[pen],
-                     markeredgecolor="k", markeredgewidth=0.4, zorder=5)
+        if rll is not None:
+            ax1r.plot(0.5, rll, marker="*", ms=11, color=s["color"],
+                      markeredgecolor="k", markeredgewidth=0.4, zorder=5)
             have_recal = True
-    ax1.set_xlabel("Communication round"); ax1.set_ylabel("Global training log-loss")
-    ax2.set_xlabel("Communication round"); ax2.set_ylabel("Global training AUROC")
+        if rau is not None:
+            ax2r.plot(0.5, rau, marker="*", ms=11, color=s["color"],
+                      markeredgecolor="k", markeredgewidth=0.4, zorder=5)
+
+    for axm, axr, ylab in [(ax1, ax1r, "Global training log-loss"),
+                           (ax2, ax2r, "Global training AUROC")]:
+        axm.set_xlim(-0.3, xmax + 0.3)
+        axm.set_ylabel(ylab)
+        axm.set_xlabel("Communication round")
+        axr.set_xlim(0, 1); axr.set_xticks([0.5]); axr.set_xticklabels(["+recal"])
+        axr.tick_params(axis="y", which="both", left=False, labelleft=False)
+        axm.spines["right"].set_visible(False)
+        axr.spines["left"].set_visible(False)
+        # diagonal break marks on the shared boundary
+        d = 0.012
+        kw = dict(transform=axm.transAxes, color="k", clip_on=False, lw=0.8)
+        axm.plot((1 - d, 1 + d), (-d, +d), **kw)
+        axm.plot((1 - d, 1 + d), (1 - d, 1 + d), **kw)
+        dr = d * (10 / 1.4)
+        kw = dict(transform=axr.transAxes, color="k", clip_on=False, lw=0.8)
+        axr.plot((-dr, +dr), (-d, +d), **kw)
+        axr.plot((-dr, +dr), (1 - d, 1 + d), **kw)
+
     handles, labels = ax1.get_legend_handles_labels()
     if have_recal:
         handles.append(Line2D([], [], color="grey", marker="*", ls="", ms=11,
-                              markeredgecolor="k", markeredgewidth=0.4,
-                              label="after intercept recalibration"))
-        labels.append("after intercept recalibration")
+                              markeredgecolor="k", markeredgewidth=0.4))
+        labels.append("after recalibration")
     ax1.legend(handles, labels, fontsize=9)
-    ax2.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(outpath, dpi=dpi)
     fig.savefig(outpath.replace(".png", ".pdf"))

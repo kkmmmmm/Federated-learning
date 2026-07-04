@@ -1,0 +1,19 @@
+# Conda environment pinned to the versions used for the published analysis.
+#     conda env create -f environment.yml
+#     conda activate gusto-fl
+name: gusto-fl
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13.14
+  - pip
+  - pip:
+      - flwr==1.31.0
+      - scikit-learn==1.6.1
+      - pandas==2.3.0
+      - numpy==2.3.1
+      - scipy==1.16.3
+      - matplotlib==3.10.8
+      - openpyxl==3.1.5
+      - joblib==1.5.2
+      - adjustText==1.4.0
